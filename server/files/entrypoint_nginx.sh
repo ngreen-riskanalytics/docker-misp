@@ -8,7 +8,7 @@ term_proc() {
 
 trap term_proc SIGTERM
 
-[ -z "$MYSQL_HOST" ] && MYSQL_HOST=db
+[ -z "$MYSQL_HOST" ] && MYSQL_HOST=mariadb
 [ -z "$MYSQL_PORT" ] && MYSQL_PORT=3306
 [ -z "$MYSQL_USER" ] && MYSQL_USER=misp
 [ -z "$MYSQL_PASSWORD" ] && MYSQL_PASSWORD=example

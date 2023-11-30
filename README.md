@@ -54,7 +54,7 @@ Nevertheless the underlying spirit of this fork is to allow "repeatable deployme
 The `docker-compose.yml` file allows further configuration settings:
 
 ```
-"MYSQL_HOST=db"
+"MYSQL_HOST=mariadb"
 "MYSQL_USER=misp"
 "MYSQL_PASSWORD=example"    # NOTE: This should be AlphaNum with no Special Chars. Otherwise, edit config files after first run.
 "MYSQL_DATABASE=misp"

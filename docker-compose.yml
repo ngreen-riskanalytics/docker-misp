@@ -14,15 +14,22 @@ services:
   redis:
     image: redis:7.2
 
-  db:
+  mariadb:
     # We use MariaDB because it supports ARM and has the expected collations
     image: mariadb:10.11
     restart: always
     environment:
+      - "MYSQL_PORT=${MYSQL_PORT:-3306}"
       - "MYSQL_USER=${MYSQL_USER:-misp}"
       - "MYSQL_PASSWORD=${MYSQL_PASSWORD:-example}"
       - "MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-password}"
       - "MYSQL_DATABASE=${MYSQL_DATABASE:-misp}"
+    ports:
+      - target: 3306
+        # published: 16033  # uncomment to get access
+        host_ip: 127.0.0.1  # local-only access
+        mode: ingress
+        protocol: tcp
     volumes:
       - mysql_data:/var/lib/mysql
     cap_add:
@@ -47,7 +54,7 @@ services:
           - PYPI_PYMISP_VERSION=${PYPI_PYMISP_VERSION}
     depends_on:
       - redis
-      - db
+      - mariadb
     ports:
       - "80:80"
       - "443:443"
@@ -81,7 +88,7 @@ services:
           "pull": true
         }
       # mysql settings
-      - "MYSQL_HOST=${MYSQL_HOST:-db}"
+      - "MYSQL_HOST=${MYSQL_HOST:-mariadb}"
       - "MYSQL_PORT=${MYSQL_PORT:-3306}"
       - "MYSQL_USER=${MYSQL_USER:-misp}"
       - "MYSQL_PASSWORD=${MYSQL_PASSWORD:-example}"
