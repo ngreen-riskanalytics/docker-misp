@@ -8,12 +8,25 @@ term_proc() {
 
 trap term_proc SIGTERM
 
-[ -z "$MYSQL_HOST" ] && MYSQL_HOST=mariadb
-[ -z "$MYSQL_PORT" ] && MYSQL_PORT=3306
-[ -z "$MYSQL_USER" ] && MYSQL_USER=misp
-[ -z "$MYSQL_PASSWORD" ] && MYSQL_PASSWORD=example
-[ -z "$MYSQL_DATABASE" ] && MYSQL_DATABASE=misp
-[ -z "$MYSQLCMD" ] && export MYSQLCMD="mysql -u $MYSQL_USER -p$MYSQL_PASSWORD -P $MYSQL_PORT -h $MYSQL_HOST -r -N $MYSQL_DATABASE"
+if [ -n "$MYSQL_HOST" ]; then
+    # MYSQL_HOST=mariadb
+    [ -z "$MYSQL_PORT" ] && MYSQL_PORT=3306
+    [ -z "$MYSQL_USER" ] && MYSQL_USER=misp
+    [ -z "$MYSQL_PASSWORD" ] && MYSQL_PASSWORD=example
+    [ -z "$MYSQL_DATABASE" ] && MYSQL_DATABASE=misp
+    [ -z "$MYSQLCMD" ] && export MYSQLCMD="mysql -u $MYSQL_USER -p$MYSQL_PASSWORD -P $MYSQL_PORT -h $MYSQL_HOST -r -N $MYSQL_DATABASE"
+else
+    # POSTGRES_HOST=postgres
+    POSTGRES_PORT=${POSTGRES_PORT:-5432}
+    POSTGRES_USER=${POSTGRES_USER:-misp}
+    POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-example}
+    POSTGRES_DATABASE=${POSTGRES_DATABASE:-misp}
+    # shellcheck disable=SC2116,SC2155,SC2153
+    [ -z "$POSTGRESCMD" ] && export POSTGRESCMD=$(echo \
+        "psql -aqX -t -v ON_ERROR_STOP=1" \
+        "postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@$POSTGRES_HOST:$POSTGRES_PORT/$POSTGRES_DATABASE")
+    echo "postgrescmd: '$POSTGRESCMD'"
+fi
 [ -z "$CRON_USER_ID" ] && export CRON_USER_ID="1"
 [ -z "$HOSTNAME" ] && export HOSTNAME="https://localhost"
 [ -z "$DISABLE_IPV6" ] && export DISABLE_IPV6=false
@@ -51,6 +64,42 @@ init_mysql(){
     fi
 }
 
+init_postgres() {
+    # Test when MySQL is ready....
+    # wait for Database come ready
+    isDBup () {
+        echo "select pid, usesysid, usename, backend_start, wait_event_type" \
+             ", wait_event, state, query, backend_type from pg_stat_activity" \
+            "limit 10" | $POSTGRESCMD 1>/dev/null
+    }
+
+    isDBinitDone () {
+        # Table attributes has existed since at least v2.1
+        echo "select 0 from attributes limit 1" | $POSTGRESCMD 1>/dev/null 2>&1
+    }
+
+    RETRY=100
+    until isDBup  || [ $RETRY -le 0 ] ; do
+        echo "... waiting for database to come up"
+        sleep 5
+        RETRY=$(( RETRY - 1))
+    done
+    if [ $RETRY -le 0 ]; then
+        >&2 echo "... error: Could not connect to Database on $POSTGRES_HOST:$POSTGRES_PORT"
+        exit 1
+    fi
+
+    if isDBinitDone; then
+        echo "... database has already been initialized"
+    else
+        echo "... database has not been initialized, importing PostgreSQL schema..."
+        {
+        $POSTGRESCMD < /var/www/MISP/INSTALL/POSTGRESQL-structure.sql \
+        && $POSTGRESCMD < /var/www/MISP/INSTALL/POSTGRESQL-data-initial.sql
+        } | grep -E '^[^- ]'  # | grep -E '^[A-Za-z]'
+    fi
+}
+
 init_misp_data_files(){
     # Init config (shared with host)
     echo "... initialize configuration files"
@@ -71,17 +120,26 @@ init_misp_data_files(){
 
     echo "... initialize database.php settings"
     # workaround for https://forums.docker.com/t/sed-couldnt-open-temporary-file-xyz-permission-denied-when-using-virtiofs/125473
-    # sed -i "s/localhost/$MYSQL_HOST/" $MISP_APP_CONFIG_PATH/database.php
-    # sed -i "s/db\s*login/$MYSQL_USER/" $MISP_APP_CONFIG_PATH/database.php
-    # sed -i "s/3306/$MYSQL_PORT/" $MISP_APP_CONFIG_PATH/database.php
-    # sed -i "s/db\s*password/$MYSQL_PASSWORD/" $MISP_APP_CONFIG_PATH/database.php
-    # sed -i "s/'database' => 'misp'/'database' => '$MYSQL_DATABASE'/" $MISP_APP_CONFIG_PATH/database.php
-    chmod +w $MISP_APP_CONFIG_PATH/database.php
-    sed "s/localhost/$MYSQL_HOST/" $MISP_APP_CONFIG_PATH/database.php > tmp; cat tmp > $MISP_APP_CONFIG_PATH/database.php; rm tmp
-    sed "s/db\s*login/$MYSQL_USER/" $MISP_APP_CONFIG_PATH/database.php > tmp; cat tmp > $MISP_APP_CONFIG_PATH/database.php; rm tmp
-    sed "s/3306/$MYSQL_PORT/" $MISP_APP_CONFIG_PATH/database.php > tmp; cat tmp > $MISP_APP_CONFIG_PATH/database.php; rm tmp
-    sed "s/db\s*password/$MYSQL_PASSWORD/" $MISP_APP_CONFIG_PATH/database.php > tmp; cat tmp > $MISP_APP_CONFIG_PATH/database.php; rm tmp
-    sed "s/'database' => 'misp'/'database' => '$MYSQL_DATABASE'/" $MISP_APP_CONFIG_PATH/database.php > tmp; cat tmp > $MISP_APP_CONFIG_PATH/database.php; rm tmp
+    datasource=${MYSQL_HOST:+Mysql}
+    datasource=${datasource:-Postgres}  # fallback
+    [ $datasource = Mysql ] && { host=$MYSQL_HOST; login=$MYSQL_USER; port=$MYSQL_PORT; password=$MYSQL_PASSWORD; database=$MYSQL_DATABASE; }
+    [ $datasource = Postgres ] && { host=$POSTGRES_HOST; login=$POSTGRES_USER; port=$POSTGRES_PORT; password=$POSTGRES_PASSWORD; database=$POSTGRES_DATABASE; }
+    tee $MISP_APP_CONFIG_PATH/database.php >/dev/null <<-EOT
+	<?php
+	class DATABASE_CONFIG {
+	    public \$default = array(
+	        'datasource' => 'Database/$datasource',
+	        'persistent' => false,
+	        'host' => '$host',
+	        'login' => '$login',
+	        'port' => $port,
+	        'password' => '$password',
+	        'database' => '$database',
+	        'prefix' => '',
+	        'encoding' => 'utf8',
+	    );
+	}
+	EOT
 
     echo "... initialize email.php settings"
     chmod +w $MISP_APP_CONFIG_PATH/email.php
@@ -241,8 +299,9 @@ init_nginx() {
 }
 
 
-# Initialize MySQL
-echo "INIT | Initialize MySQL ..." && init_mysql
+# Initialize database
+[ -n "$MYSQLCMD" ] && echo "INIT | Initialize MySQL ..." && init_mysql
+[ -n "$POSTGRESCMD" ] && echo "INIT | Initialize PostgreSQL ..." && init_postgres
 
 # Initialize NGINX
 echo "INIT | Initialize NGINX ..." && init_nginx

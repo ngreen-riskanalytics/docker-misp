@@ -16,6 +16,7 @@ FROM "${DOCKER_HUB_PROXY}debian:bullseye-slim" as composer-build
         php-bcmath \
         php-mbstring \
         php-mysql \
+        php-pgsql \
         php-redis \
         php-gd \
         php-fpm \
@@ -129,6 +130,8 @@ EOF
         rm -r /var/www/MISP/PyMISP
         find /var/www/MISP/INSTALL/* ! -name 'MYSQL.sql' -type f -exec rm {} +
         find /var/www/MISP/INSTALL/* ! -name 'MYSQL.sql' -type l -exec rm {} +
+        find /var/www/MISP/INSTALL/ ! -name 'MYSQL.sql' ! -name 'POSTGRESQL*.sql' -type f -exec rm {} +
+        find /var/www/MISP/INSTALL/ ! -name 'MYSQL.sql' ! -name 'POSTGRESQL*.sql' -type l -exec rm {} +
         # Remove most files in .git - we do not use git functionality in docker
         find /var/www/MISP/.git/* ! -name HEAD -exec rm -rf {} +
 EOF
@@ -151,6 +154,7 @@ FROM "${DOCKER_HUB_PROXY}debian:bullseye-slim"
         ssdeep \
         libfuzzy2 \
         mariadb-client \
+        postgresql-client \
         rsync \
         # Python Requirements
         python3 \
@@ -165,6 +169,7 @@ FROM "${DOCKER_HUB_PROXY}debian:bullseye-slim"
         php-bcmath \
         php-mbstring \
         php-mysql \
+        php-pgsql \
         php-redis \
         php-gd \
         php-fpm \
